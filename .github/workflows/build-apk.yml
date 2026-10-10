@@ -57,6 +57,7 @@ jobs:
 
       - name: Build Debug APK with Gradle
         run: |
+          set -o pipefail
           cd android
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle-build.log
 
@@ -65,12 +66,30 @@ jobs:
         run: |
           echo "## Gradle Failure Output" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
-          tail -n 120 gradle-build.log >> $GITHUB_STEP_SUMMARY || true
+          if [ -f gradle-build.log ]; then
+            tail -n 120 gradle-build.log >> $GITHUB_STEP_SUMMARY
+          fi
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Collect and Stage Generated APK
+        run: |
+          mkdir -p build-artifacts
+          echo "Searching for generated APK files..."
+          find android -type f -name "*.apk" -ls
+          APK_FILE=$(find android -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            echo "Copying $APK_FILE to build-artifacts/cecilian-alumnet-debug.apk"
+            cp "$APK_FILE" build-artifacts/cecilian-alumnet-debug.apk
+            ls -lh build-artifacts/
+          else
+            echo "::error::No APK file found in android output directory."
+            find android/app/build -maxdepth 4 -ls || true
+            exit 1
+          fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: cecilian-alumnet-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: build-artifacts/cecilian-alumnet-debug.apk
           if-no-files-found: error
