@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -28,20 +28,23 @@ jobs:
           node-version: 22
           cache: 'npm'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Setup Android SDK Environment and Accept Licenses
         run: |
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          sudo chown -R $USER:$USER "$ANDROID_HOME"
           mkdir -p "$ANDROID_HOME/licenses"
-          echo -e "\n24333f8a63518b10e4259d4b494533038161f276" >> "$ANDROID_HOME/licenses/android-sdk-license"
-          echo -e "\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> "$ANDROID_HOME/licenses/android-sdk-license"
-          echo -e "\n84831b9409646a201e684425cb940368b571e50e" >> "$ANDROID_HOME/licenses/android-sdk-preview-license"
-          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "platforms;android-34" "build-tools;35.0.0" || true
+          printf "24333f8a63518b10e4259d4b494533038161f276\nd56f5187479451eabf01fb78af6dfcb131a6481e\n84831b9409646a201e684425cb940368b571e50e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "84831b9409646a201e684425cb940368b571e50e\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          printf "601085b94cd77f0b54ff864069554465b3877918\n" > "$ANDROID_HOME/licenses/android-googletv-license"
+          printf "33b6a2b649079729d6e5e472280c89f1e1e9eab9\n" > "$ANDROID_HOME/licenses/google-gdk-license"
+          printf "e9acab583e2349a6831cb6e44f58e454e3aad48a\n" > "$ANDROID_HOME/licenses/mips-android-sysimage-license"
+
+          # Discover sdkmanager binary path
+          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f -perm /111 2>/dev/null | head -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            echo "Found sdkmanager at: $SDKMANAGER"
+            yes | "$SDKMANAGER" --licenses || true
+            "$SDKMANAGER" --install "platforms;android-35" "platforms;android-34" "build-tools;35.0.0" || true
           fi
 
       - name: Install dependencies
@@ -74,15 +77,23 @@ jobs:
       - name: Collect and Stage Generated APK
         run: |
           mkdir -p build-artifacts
-          echo "Searching for generated APK files..."
-          find android -type f -name "*.apk" -ls
-          APK_FILE=$(find android -type f -name "*.apk" | head -n 1)
+          echo "Searching for newly built APK in android/app/build/outputs/apk/..."
+          find android/app/build/outputs/apk/ -type f -name "*.apk" -ls || true
+
+          # Look for the debug APK output first
+          APK_FILE=$(find android/app/build/outputs/apk/ -type f -name "*debug*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find android/app/build/outputs/apk/ -type f -name "*.apk" | head -n 1)
+          fi
+
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
             echo "Copying $APK_FILE to build-artifacts/cecilian-alumnet-debug.apk"
             cp "$APK_FILE" build-artifacts/cecilian-alumnet-debug.apk
             ls -lh build-artifacts/
+            echo "### Build Succeeded" >> $GITHUB_STEP_SUMMARY
+            echo "Generated APK: \`cecilian-alumnet-debug.apk\` ($(du -h build-artifacts/cecilian-alumnet-debug.apk | cut -f1))" >> $GITHUB_STEP_SUMMARY
           else
-            echo "::error::No APK file found in android output directory."
+            echo "::error::No built APK found in android/app/build/outputs/apk/"
             find android/app/build -maxdepth 4 -ls || true
             exit 1
           fi
@@ -93,3 +104,4 @@ jobs:
           name: cecilian-alumnet-debug-apk
           path: build-artifacts/cecilian-alumnet-debug.apk
           if-no-files-found: error
+
